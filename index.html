@@ -278,8 +278,9 @@ function dirAttendance(){
     h+=`<div class="card">
       <div class="row"><b>${esc(labelCid(r.cid))} - الدرس ${r.lesson}</b><span class="muted">${r.date}</span></div>
       <div class="muted" style="margin:6px 0">حاضر: ${p} | غائب: ${a}</div>
-      ${r.marks.map(m=>`<div class="row"><span>${esc(m.name)}</span>
-        <span style="color:${m.present?'var(--ok)':'var(--bad)'}">${m.present?'✓ حاضر':'✗ غائب'}</span></div>`).join("")}
+      ${r.marks.map(m=>`<div class="row"><span>${esc(m.name)}</span><span>
+        <button class="mk g ${m.present?'on':''}" onclick="editMark('${r.date}','${r.cid}',${r.lesson},'${esc(m.name)}',true)">✓</button><button class="mk r ${!m.present?'on':''}" onclick="editMark('${r.date}','${r.cid}',${r.lesson},'${esc(m.name)}',false)">✗</button>
+      </span></div>`).join("")}
     </div>`;
   });
   h+=`<p class="muted">يتصفر سجل المدير تلقائيا يوم الجمعة مع بداية أسبوع جديد.</p>`;
@@ -327,14 +328,16 @@ async function editStudent(i){
     await saveStudents(S.stuCls, next);
     render();
   });
-}
-async function delStudent(i){
-  if(!confirm("حذف الطالب؟")) return;
-  const next=(students[S.stuCls]||[]).filter((_,j)=>j!==i);
-  await withLoading(async()=>{
-    await saveStudents(S.stuCls, next);
-    render();
-  });
+
+async function editMark(date,cid,lesson,name,val){
+  const rec=S.weekRecs.find(r=>r.date===date && r.cid===cid && r.lesson===lesson);
+  if(!rec) return;
+  const marks=rec.marks.map(m=> m.name===name ? {...m, present:val} : m);
+  const next={...rec, marks, editedAt:new Date().toISOString()};
+  S.weekRecs=S.weekRecs.map(r=> r===rec ? next : r);
+  render();
+  setDoc(doc(fdb,"attendance",`${date}_${cid}_${lesson}`), next)
+    .catch(e=>{console.error(e); toast("تعذر حفظ التعديل");});
 }
 
 Object.assign(window,{
