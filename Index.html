@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#2b6cb0">
+<title>سجل حضور الطلاب</title>
+<style>
+:root{--bg:#f4f6fb;--card:#fff;--pri:#2b6cb0;--ok:#2f855a;--bad:#c53030;--txt:#1a202c;--mut:#718096}
+*{box-sizing:border-box;font-family:Tahoma,Arial,sans-serif}
+body{margin:0;background:var(--bg);color:var(--txt);min-height:100vh}
+header{background:var(--pri);color:#fff;padding:14px 16px;position:sticky;top:0;z-index:5;padding-top:calc(14px + env(safe-area-inset-top,0px))}
+header h1{font-size:18px;margin:0;text-align:center}
+main{padding:14px;max-width:640px;margin:auto;padding-bottom:calc(14px + env(safe-area-inset-bottom,0px))}
+.card{background:var(--card);border-radius:12px;padding:14px;margin-bottom:12px;box-shadow:0 1px 3px rgba(0,0,0,.08)}
+button{font-size:16px;border:none;border-radius:10px;padding:12px 14px;cursor:pointer;background:var(--pri);color:#fff}
+button.sec{background:#e2e8f0;color:var(--txt)}
+button.bad{background:var(--bad)}
+button:disabled{opacity:.6;cursor:default}
+input,select{width:100%;padding:12px;font-size:16px;border:1px solid #cbd5e0;border-radius:10px;margin-bottom:10px;background:#fff}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.row{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 0;border-bottom:1px solid #edf2f7}
+.mk{background:#e2e8f0;color:#333;padding:8px 14px;margin-inline-start:6px}
+.mk.g.on{background:var(--ok);color:#fff}
+.mk.r.on{background:var(--bad);color:#fff}
+.tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}
+.tabs button{padding:8px 12px;font-size:14px}
+.tabs button.active{background:var(--txt)}
+.muted{color:var(--mut);font-size:14px}
+.toast{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:#1a202c;color:#fff;padding:10px 16px;border-radius:10px;display:none;z-index:9}
+</style>
+</head>
+<body>
+<header><h1>سجل حضور الطلاب</h1></header>
+<main id="app"></main>
+<div id="toast" class="toast"></div>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import { getFirestore, doc, setDoc, getDocs, collection, query, where }
+  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyAN0MPXyP7Qu1biUU4Yr-85AB74i6Arqv4",
+  authDomain: "abdaa-school.firebaseapp.com",
+  projectId: "abdaa-school",
+  storageBucket: "abdaa-school.firebasestorage.app",
+  messagingSenderId: "93235619527",
+  appId: "1:93235619527:web:87f809681737b22466c0e2"
+};
+const fdb = getFirestore(initializeApp(firebaseConfig));
+
+const CLASSES = [
+  {grade:"الرابع", stream:"علمي", sections:["أ","ب","ج","د"]},
+  {grade:"الرابع", stream:"أدبي", sections:[""]},
+  {grade:"الخامس", stream:"علمي", sections:["أ","ب"]},
+  {grade:"الخامس", stream:"أدبي", sections:[""]},
+  {grade:"السادس", stream:"علمي", sections:["أ","ب","ج"]},
+  {grade:"السادس", stream:"أدبي", sections:[""]}
+];
+const DIRECTOR_CODE = "99551059902Aa";
+
+function classList(){
+  const out=[];
+  for(const c of CLASSES) for(const s of c.sections)
+    out.push({key:`${c.grade}|${c.stream}|${s}`, label:`${c.grade} ${c.stream}${s?" - الشعبة "+s:""}`});
+  return out;
+}
+const cidOf = key => key.replace(/\|/g,"__");
+function labelCid(cid){
+  const c=classList().find(x=>cidOf(x.key)===cid);
+  return c?c.label:cid;
+}
+
+function fmt(d){
+  return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");
+}
+function todayKey(){return fmt(new Date());}
+function weekKey(d=new Date()){
+  const diff=(d.getDay()-5+7)%7;
+  const f=new Date(d); f.setDate(d.getDate()-diff);
+  return fmt(f);
+}
+
+let students={};
+let S={screen:"login", cls:null, lesson:1, dirTab:"att", dirFilter:"", stuCls:"", saved:{}, weekRecs:[]};
+let draft={};
+const $=id=>document.getElementById(id);
+function esc(s){return String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));}
+function toast(m){
+  const t=$("toast"); t.textContent=m; t.style.display="block";
+  clearTimeout(t._h); t._h=setTimeout(()=>t.style.display="none",2500);
+}
+async function withLoading(fn){
+  try{ await fn(); }
+  catch(e){ console.error(e); toast("تعذر الاتصال بقاعدة البيانات"); }
+}
+function go(screen, extra){Object.assign(S,{screen},extra||{}); render();}
+function render(){
+  const v=$("app");
+  if(S.screen==="login") v.innerHTML=vLogin();
+  else if(S.screen==="dlogin") v.innerHTML=vDlogin();
+  else if(S.screen==="tclass") v.innerHTML=vTClass();
+  else if(S.screen==="tsheet") v.innerHTML=vTSheet();
+  else if(S.screen==="director") v.innerHTML=vDirector();
+}
+
+async function loadStudents(){
+  const snap=await getDocs(collection(fdb,"students"));
+  students={};
+  snap.forEach(d=>students[d.id]=d.data().names||[]);
+}
+async function saveStudents(cid, names){
+  await setDoc(doc(fdb,"students",cid),{names});
+  students[cid]=names;
+}
+
+/* ---------- الدخول ---------- */
+function vLogin(){
+  return `<div class="card" style="text-align:center">
+    <h2 style="margin-top:0">مرحبا</h2>
+    <p class="muted">اختر نوع الدخول</p>
+    <div class="grid">
+      <button onclick="openTeacher()">دخول المدرس</button>
+      <button class="sec" onclick="go('dlogin')">دخول المدير</button>
+    </div></div>`;
+}
+function vDlogin(){
+  return `<div class="card"><h3>دخول المدير</h3>
+    <input id="dcode" type="password" placeholder="الرمز الخاص">
+    <div class="grid">
+      <button onclick="dirLogin()">دخول</button>
+      <button class="sec" onclick="go('login')">رجوع</button>
+    </div></div>`;
+}
+async function openTeacher(){
+  await withLoading(async()=>{
+    await loadStudents();
+    go('tclass');
+  });
+}
+async function dirLogin(){
+  if($("dcode").value!==DIRECTOR_CODE) return toast("الرمز غير صحيح");
+  await withLoading(async()=>{
+    await loadStudents();
+    const recs=await loadWeekRecords();
+    go('director',{dirTab:'att', weekRecs:recs});
+  });
+}
+async function loadWeekRecords(){
+  const s=await getDocs(query(collection(fdb,"attendance"), where("week","==",weekKey())));
+  const recs=[];
+  s.forEach(d=>recs.push(d.data()));
+  return recs;
+}
+async function refreshWeek(){
+  await withLoading(async()=>{
+    S.weekRecs=await loadWeekRecords();
+    render(); toast("تم التحديث");
+  });
+}
+
+/* ---------- المدرس ---------- */
+function vTClass(){
+  let h=`<div class="card"><button class="sec" onclick="go('login')">⬅ رجوع</button></div><div class="grid">`;
+  classList().forEach(c=>{
+    h+=`<button onclick="openClass('${c.key}')">${esc(c.label)}</button>`;
+  });
+  return h+`</div>`;
+}
+async function openClass(key){
+  await withLoading(async()=>{
+    const cid=cidOf(key);
+    const s=await getDocs(query(collection(fdb,"attendance"),
+      where("date","==",todayKey()), where("cid","==",cid)));
+    const saved={};
+    s.forEach(d=>saved[d.data().lesson]=d.data());
+    draft={};
+    go('tsheet',{cls:key, lesson:1, saved});
+  });
+}
+function draftFor(){
+  const k=todayKey()+"|"+S.cls+"|"+S.lesson;
+  return draft[k]||(draft[k]={});
+}
+function setLesson(i){S.lesson=i; render();}
+function mark(i,val){
+  const n=(students[cidOf(S.cls)]||[])[i];
+  if(n===undefined) return;
+  draftFor()[n]=val; render();
+}
+function vTSheet(){
+  const c=classList().find(x=>x.key===S.cls);
+  const today=todayKey();
+  const names=students[cidOf(S.cls)]||[];
+  const rec=S.saved[S.lesson];
+  let h=`<div class="card"><button class="sec" onclick="go('tclass')">⬅ الصفوف</button>
+    <b style="margin-inline-start:8px">${esc(c.label)}</b>
+    <div class="muted">${today}</div></div>`;
+  h+=`<div class="tabs">`;
+  for(let i=1;i<=6;i++){
+    h+=`<button class="${i===S.lesson?'active':'sec'}" onclick="setLesson(${i})">الدرس ${i}${S.saved[i]?' ✔':''}</button>`;
+  }
+  h+=`</div>`;
+
+  if(!names.length){
+    h+=`<div class="card muted">لا يوجد طلاب في هذه الشعبة. يضيف المدير الأسماء من لوحة المدير.</div>`;
+  } else {
+    const d = rec ? Object.fromEntries(rec.marks.map(m=>[m.name,m.present])) : draftFor();
+    h+=`<div class="card">`;
+    names.forEach((n,i)=>{
+      const val=d[n];
+      h+=`<div class="row"><span>${i+1}. ${esc(n)}</span><span>
+        <button class="mk g ${val===true?'on':''}" ${rec?'disabled':''} onclick="mark(${i},true)">✓ حاضر</button><button class="mk r ${val===false?'on':''}" ${rec?'disabled':''} onclick="mark(${i},false)">✗ غائب</button>
+      </span></div>`;
+    });
+    h+=`</div>`;
+    h+= rec
+      ? `<div class="card muted">تم حفظ هذا الدرس وإرساله للمدير، ولا يمكن تعديله اليوم.</div>`
+      : `<button style="width:100%" onclick="saveLesson()">حفظ الدرس ${S.lesson}</button>`;
+  }
+  return h;
+}
+async function saveLesson(){
+  const cid=cidOf(S.cls);
+  const names=students[cid]||[];
+  if(!names.length) return;
+  const d=draftFor();
+  if(names.some(n=>d[n]===undefined)) return toast("حدد حاضر أو غائب لجميع الطلاب");
+  const today=todayKey();
+  const rec={
+    date:today, cid, lesson:S.lesson, week:weekKey(),
+    savedAt:new Date().toISOString(),
+    marks:names.map(n=>({name:n,present:d[n]}))
+  };
+  await withLoading(async()=>{
+    await setDoc(doc(fdb,"attendance",`${today}_${cid}_${S.lesson}`), rec);
+    S.saved[S.lesson]=rec;
+    toast("تم حفظ الدرس وإرساله للمدير");
+    render();
+  });
+}
+
+/* ---------- المدير ---------- */
+function vDirector(){
+  let h=`<div class="card"><button class="sec" onclick="go('login')">⬅ خروج</button>
+    <span class="muted" style="margin-inline-start:8px">بداية الأسبوع: ${weekKey()}</span></div>`;
+  h+=`<div class="tabs">
+    <button class="${S.dirTab==='att'?'active':'sec'}" onclick="setDirTab('att')">سجل الحضور</button>
+    <button class="${S.dirTab==='stu'?'active':'sec'}" onclick="setDirTab('stu')">إدارة الطلاب</button>
+  </div>`;
+  return h+(S.dirTab==='att'? dirAttendance() : dirStudents());
+}
+function setDirTab(t){S.dirTab=t; render();}
+function setDirFilter(v){S.dirFilter=v; render();}
+function setStuCls(v){S.stuCls=v; render();}
+
+function dirAttendance(){
+  const opts=`<option value="">كل الصفوف</option>`+classList().map(c=>
+    `<option value="${cidOf(c.key)}" ${S.dirFilter===cidOf(c.key)?'selected':''}>${esc(c.label)}</option>`).join("");
+  let h=`<div class="card"><select onchange="setDirFilter(this.value)">${opts}</select>
+    <button class="sec" style="width:100%" onclick="refreshWeek()">تحديث</button></div>`;
+
+  const items=S.weekRecs
+    .filter(r=>!S.dirFilter || r.cid===S.dirFilter)
+    .sort((a,b)=> b.date.localeCompare(a.date) || a.cid.localeCompare(b.cid) || a.lesson-b.lesson);
+
+  if(!items.length) h+=`<div class="card muted">لا توجد سجلات لهذا الأسبوع.</div>`;
+  items.forEach(r=>{
+    const p=r.marks.filter(m=>m.present).length;
+    const a=r.marks.length-p;
+    h+=`<div class="card">
+      <div class="row"><b>${esc(labelCid(r.cid))} - الدرس ${r.lesson}</b><span class="muted">${r.date}</span></div>
+      <div class="muted" style="margin:6px 0">حاضر: ${p} | غائب: ${a}</div>
+      ${r.marks.map(m=>`<div class="row"><span>${esc(m.name)}</span>
+        <span style="color:${m.present?'var(--ok)':'var(--bad)'}">${m.present?'✓ حاضر':'✗ غائب'}</span></div>`).join("")}
+    </div>`;
+  });
+  h+=`<p class="muted">يتصفر سجل المدير تلقائيا يوم الجمعة مع بداية أسبوع جديد.</p>`;
+  return h;
+}
+
+function dirStudents(){
+  const opts=`<option value="">اختر الصف والشعبة</option>`+classList().map(c=>
+    `<option value="${cidOf(c.key)}" ${S.stuCls===cidOf(c.key)?'selected':''}>${esc(c.label)}</option>`).join("");
+  let h=`<div class="card"><select onchange="setStuCls(this.value)">${opts}</select></div>`;
+  if(S.stuCls){
+    const names=students[S.stuCls]||[];
+    h+=`<div class="card"><input id="newName" placeholder="اسم الطالب">
+      <button style="width:100%" onclick="addStudent()">إضافة طالب</button></div>`;
+    h+=`<div class="card">`;
+    if(!names.length) h+=`<span class="muted">لا يوجد طلاب بعد</span>`;
+    names.forEach((n,i)=>{
+      h+=`<div class="row"><span>${i+1}. ${esc(n)}</span>
+        <span><button class="sec" onclick="editStudent(${i})">تعديل</button>
+        <button class="bad" onclick="delStudent(${i})">حذف</button></span></div>`;
+    });
+    h+=`</div>`;
+  }
+  return h;
+}
+async function addStudent(){
+  const v=$("newName").value.trim();
+  if(!v) return toast("اكتب اسم الطالب");
+  const current=students[S.stuCls]||[];
+  if(current.includes(v)) return toast("الاسم موجود مسبقا");
+  await withLoading(async()=>{
+    await saveStudents(S.stuCls, [...current, v]);
+    render(); toast("تمت الإضافة");
+  });
+}
+async function editStudent(i){
+  const current=students[S.stuCls]||[];
+  const v=prompt("تعديل اسم الطالب", current[i]);
+  if(v===null) return;
+  const t=v.trim();
+  if(!t) return;
+  if(current.some((n,j)=>j!==i && n===t)) return toast("الاسم موجود مسبقا");
+  const next=[...current]; next[i]=t;
+  await withLoading(async()=>{
+    await saveStudents(S.stuCls, next);
+    render();
+  });
+}
+async function delStudent(i){
+  if(!confirm("حذف الطالب؟")) return;
+  const next=(students[S.stuCls]||[]).filter((_,j)=>j!==i);
+  await withLoading(async()=>{
+    await saveStudents(S.stuCls, next);
+    render();
+  });
+}
+
+Object.assign(window,{
+  go, openTeacher, openClass, setLesson, mark, saveLesson,
+  dirLogin, setDirTab, setDirFilter, setStuCls, refreshWeek,
+  addStudent, editStudent, delStudent
+});
+
+render();
+</script>
+</body>
+</html>
