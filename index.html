@@ -42,7 +42,7 @@ input,select{width:100%;padding:12px;font-size:16px;border:1px solid #cbd5e0;bor
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-import { getFirestore, doc, setDoc, getDocs, collection, query, where }
+import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, doc, setDoc, getDocs, collection, query, where }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
 const firebaseConfig = {
@@ -53,7 +53,9 @@ const firebaseConfig = {
   messagingSenderId: "93235619527",
   appId: "1:93235619527:web:87f809681737b22466c0e2"
 };
-const fdb = getFirestore(initializeApp(firebaseConfig));
+const fdb = initializeFirestore(initializeApp(firebaseConfig), {
+  localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() })
+});
 
 const CLASSES = [
   {grade:"الرابع", stream:"علمي", sections:["أ","ب","ج","د"]},
@@ -115,9 +117,9 @@ async function loadStudents(){
   students={};
   snap.forEach(d=>students[d.id]=d.data().names||[]);
 }
-async function saveStudents(cid, names){
-  await setDoc(doc(fdb,"students",cid),{names});
+function saveStudents(cid, names){
   students[cid]=names;
+  setDoc(doc(fdb,"students",cid),{names}).catch(e=>console.error(e));
 }
 
 /* ---------- الدخول ---------- */
@@ -226,7 +228,7 @@ function vTSheet(){
   }
   return h;
 }
-async function saveLesson(){
+function saveLesson(){
   const cid=cidOf(S.cls);
   const names=students[cid]||[];
   if(!names.length) return;
@@ -238,12 +240,11 @@ async function saveLesson(){
     savedAt:new Date().toISOString(),
     marks:names.map(n=>({name:n,present:d[n]}))
   };
-  await withLoading(async()=>{
-    await setDoc(doc(fdb,"attendance",`${today}_${cid}_${S.lesson}`), rec);
-    S.saved[S.lesson]=rec;
-    toast("تم حفظ الدرس وإرساله للمدير");
-    render();
-  });
+  S.saved[S.lesson]=rec;
+  setDoc(doc(fdb,"attendance",`${today}_${cid}_${S.lesson}`), rec)
+    .catch(e=>console.error(e));
+  toast("تم حفظ الدرس");
+  render();
 }
 
 /* ---------- المدير ---------- */
