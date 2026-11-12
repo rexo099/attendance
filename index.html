@@ -2,13 +2,13 @@
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="UTF-8">
-  <link rel="manifest" href="manifest.json">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#2b6cb0">
+<link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon-192.png">
 <script>
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js');
 </script>
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#2b6cb0">
 <title>سجل حضور الطلاب</title>
 <style>
 :root{--bg:#f4f6fb;--card:#fff;--pri:#2b6cb0;--ok:#2f855a;--bad:#c53030;--txt:#1a202c;--mut:#718096}
@@ -16,7 +16,7 @@
 body{margin:0;background:var(--bg);color:var(--txt);min-height:100vh}
 header{background:var(--pri);color:#fff;padding:14px 16px;position:sticky;top:0;z-index:5;padding-top:calc(14px + env(safe-area-inset-top,0px))}
 header h1{font-size:18px;margin:0;text-align:center}
-main{padding:14px;max-width:640px;margin:auto;padding-bottom:calc(14px + env(safe-area-inset-bottom,0px))}
+main{padding:14px;max-width:640px;margin:auto;padding-bottom:20px}
 .card{background:var(--card);border-radius:12px;padding:14px;margin-bottom:12px;box-shadow:0 1px 3px rgba(0,0,0,.08)}
 button{font-size:16px;border:none;border-radius:10px;padding:12px 14px;cursor:pointer;background:var(--pri);color:#fff}
 button.sec{background:#e2e8f0;color:var(--txt)}
@@ -32,17 +32,18 @@ input,select{width:100%;padding:12px;font-size:16px;border:1px solid #cbd5e0;bor
 .tabs button{padding:8px 12px;font-size:14px}
 .tabs button.active{background:var(--txt)}
 .muted{color:var(--mut);font-size:14px}
+footer{text-align:center;color:#718096;font-size:14px;padding:16px 10px 24px}
 .toast{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:#1a202c;color:#fff;padding:10px 16px;border-radius:10px;display:none;z-index:9}
 </style>
 </head>
 <body>
 <header><h1>سجل حضور الطلاب</h1></header>
 <main id="app"></main>
-<footer style="text-align:center;color:#718096;font-size:14px;padding:16px 10px 24px">
+<footer>
   <div>الإنتاج من الطالب: عبدالسلام صباح و احمد صباح</div>
   <div>الصف الرابع: ج</div>
 </footer>
-  <div id="toast" class="toast"></div>
+<div id="toast" class="toast"></div>
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
@@ -227,7 +228,7 @@ function vTSheet(){
     });
     h+=`</div>`;
     h+= rec
-      ? `<div class="card muted">تم حفظ هذا الدرس وإرساله للمدير، ولا يمكن تعديله اليوم.</div>`
+      ? `<div class="card muted">تم حفظ هذا الدرس وإرساله للمدير، ولا يمكن تعديله من المدرس.</div>`
       : `<button style="width:100%" onclick="saveLesson()">حفظ الدرس ${S.lesson}</button>`;
   }
   return h;
@@ -282,8 +283,8 @@ function dirAttendance(){
     h+=`<div class="card">
       <div class="row"><b>${esc(labelCid(r.cid))} - الدرس ${r.lesson}</b><span class="muted">${r.date}</span></div>
       <div class="muted" style="margin:6px 0">حاضر: ${p} | غائب: ${a}</div>
-      ${r.marks.map(m=>`<div class="row"><span>${esc(m.name)}</span><span>
-        <button class="mk g ${m.present?'on':''}" onclick="editMark('${r.date}','${r.cid}',${r.lesson},'${esc(m.name)}',true)">✓</button><button class="mk r ${!m.present?'on':''}" onclick="editMark('${r.date}','${r.cid}',${r.lesson},'${esc(m.name)}',false)">✗</button>
+      ${r.marks.map((m,mi)=>`<div class="row"><span>${esc(m.name)}</span><span>
+        <button class="mk g ${m.present?'on':''}" onclick="editMark('${r.date}','${r.cid}',${r.lesson},${mi},true)">✓</button><button class="mk r ${!m.present?'on':''}" onclick="editMark('${r.date}','${r.cid}',${r.lesson},${mi},false)">✗</button>
       </span></div>`).join("")}
     </div>`;
   });
@@ -315,12 +316,10 @@ async function addStudent(){
   if(!v) return toast("اكتب اسم الطالب");
   const current=students[S.stuCls]||[];
   if(current.includes(v)) return toast("الاسم موجود مسبقا");
-  await withLoading(async()=>{
-    await saveStudents(S.stuCls, [...current, v]);
-    render(); toast("تمت الإضافة");
-  });
+  saveStudents(S.stuCls, [...current, v]);
+  render(); toast("تمت الإضافة");
 }
-async function editStudent(i){
+function editStudent(i){
   const current=students[S.stuCls]||[];
   const v=prompt("تعديل اسم الطالب", current[i]);
   if(v===null) return;
@@ -328,15 +327,21 @@ async function editStudent(i){
   if(!t) return;
   if(current.some((n,j)=>j!==i && n===t)) return toast("الاسم موجود مسبقا");
   const next=[...current]; next[i]=t;
-  await withLoading(async()=>{
-    await saveStudents(S.stuCls, next);
-    render();
-  });
+  saveStudents(S.stuCls, next);
+  render();
+}
+function delStudent(i){
+  if(!confirm("حذف الطالب؟")) return;
+  const next=(students[S.stuCls]||[]).filter((_,j)=>j!==i);
+  saveStudents(S.stuCls, next);
+  render();
+}
 
-async function editMark(date,cid,lesson,name,val){
+/* تعديل الحضور من المدير: يُحفظ محلياً ثم يُرسل عند توفر النت */
+function editMark(date,cid,lesson,mi,val){
   const rec=S.weekRecs.find(r=>r.date===date && r.cid===cid && r.lesson===lesson);
   if(!rec) return;
-  const marks=rec.marks.map(m=> m.name===name ? {...m, present:val} : m);
+  const marks=rec.marks.map((m,i)=> i===mi ? {...m, present:val} : m);
   const next={...rec, marks, editedAt:new Date().toISOString()};
   S.weekRecs=S.weekRecs.map(r=> r===rec ? next : r);
   render();
@@ -347,7 +352,7 @@ async function editMark(date,cid,lesson,name,val){
 Object.assign(window,{
   go, openTeacher, openClass, setLesson, mark, saveLesson,
   dirLogin, setDirTab, setDirFilter, setStuCls, refreshWeek,
-  addStudent, editStudent, delStudent
+  addStudent, editStudent, delStudent, editMark
 });
 
 render();
